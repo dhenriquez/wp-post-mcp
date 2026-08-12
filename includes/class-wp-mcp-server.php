@@ -268,6 +268,18 @@ class WP_MCP_Server {
 			case 'tools/call':
 				return self::handle_tools_call( $id, $params );
 
+			case 'prompts/list':
+				return self::handle_prompts_list( $id );
+
+			case 'prompts/get':
+				return self::handle_prompts_get( $id, $params );
+
+			case 'resources/list':
+				return self::handle_resources_list( $id );
+
+			case 'resources/read':
+				return self::handle_resources_read( $id, $params );
+
 			default:
 				return self::format_error( $id, -32601, sprintf( 'Method not found: %s', $method ) );
 		}
@@ -284,7 +296,13 @@ class WP_MCP_Server {
 		$result = array(
 			'protocolVersion' => self::MCP_PROTOCOL_VERSION,
 			'capabilities'    => array(
-				'tools' => array(
+				'tools'     => array(
+					'listChanged' => false,
+				),
+				'prompts'   => array(
+					'listChanged' => false,
+				),
+				'resources' => array(
 					'listChanged' => false,
 				),
 			),
@@ -345,6 +363,181 @@ class WP_MCP_Server {
 		} catch ( Exception $e ) {
 			return self::format_error( $id, -32000, $e->getMessage() );
 		}
+	}
+
+	/**
+	 * Handle prompts/list method.
+	 *
+	 * Exposes system prompts configured in WP Admin to the MCP client.
+	 *
+	 * @param mixed $id Request ID.
+	 * @return array
+	 */
+	private static function handle_prompts_list( $id ) {
+		$prompts = get_option( 'wp_mcp_custom_prompts', array() );
+		if ( ! is_array( $prompts ) ) {
+			$prompts = array();
+		}
+
+		$formatted = array();
+		foreach ( $prompts as $p ) {
+			$formatted[] = array(
+				'name'        => $p['name'],
+				'description' => ! empty( $p['description'] ) ? $p['description'] : '',
+				'arguments'   => array(
+					array(
+						'name'        => 'topic',
+						'description' => 'Optional topic, target keyword, or draft ID to apply this prompt to.',
+						'required'    => false,
+					),
+				),
+			);
+		}
+
+		return self::format_result(
+			$id,
+			array(
+				'prompts' => $formatted,
+			)
+		);
+	}
+
+	/**
+	 * Handle prompts/get method.
+	 *
+	 * Retrieves full instruction message for a specific prompt.
+	 *
+	 * @param mixed $id Request ID.
+	 * @param array $params Request parameters.
+	 * @return array
+	 */
+	private static function handle_prompts_get( $id, $params ) {
+		if ( empty( $params['name'] ) || ! is_string( $params['name'] ) ) {
+			return self::format_error( $id, -32602, 'Invalid params: "name" is required for prompts/get.' );
+		}
+
+		$prompt_name = $params['name'];
+		$prompts     = get_option( 'wp_mcp_custom_prompts', array() );
+		if ( ! is_array( $prompts ) ) {
+			$prompts = array();
+		}
+
+		$found = null;
+		foreach ( $prompts as $p ) {
+			if ( $p['name'] === $prompt_name ) {
+				$found = $p;
+				break;
+			}
+		}
+
+		if ( ! $found ) {
+			return self::format_error( $id, -32602, sprintf( 'Prompt not found: %s', esc_html( $prompt_name ) ) );
+		}
+
+		$prompt_content = $found['prompt'];
+		if ( ! empty( $params['arguments']['topic'] ) ) {
+			$prompt_content .= "\n\nTopic / Input Context: " . sanitize_text_field( $params['arguments']['topic'] );
+		}
+
+		$result = array(
+			'description' => ! empty( $found['description'] ) ? $found['description'] : '',
+			'messages'    => array(
+				array(
+					'role'    => 'user',
+					'content' => array(
+						'type' => 'text',
+						'text' => $prompt_content,
+					),
+				),
+			),
+		);
+
+		return self::format_result( $id, $result );
+	}
+
+	/**
+	 * Handle resources/list method.
+	 *
+	 * Exposes site content resources like recent published posts.
+	 *
+	 * @param mixed $id Request ID.
+	 * @return array
+	 */
+	private static function handle_resources_list( $id ) {
+		$resources = array(
+			array(
+				'uri'         => 'wordpress://posts/recent',
+				'name'        => 'Recent Published Posts',
+				'description' => 'Summary of the 10 most recently published articles on this WordPress site for internal linking.',
+				'mimeType'    => 'application/json',
+			),
+		);
+
+		return self::format_result(
+			$id,
+			array(
+				'resources' => $resources,
+			)
+		);
+	}
+
+	/**
+	 * Handle resources/read method.
+	 *
+	 * @param mixed $id Request ID.
+	 * @param array $params Request parameters.
+	 * @return array
+	 */
+	private static function handle_resources_read( $id, $params ) {
+		if ( empty( $params['uri'] ) || ! is_string( $params['uri'] ) ) {
+			return self::format_error( $id, -32602, 'Invalid params: "uri" is required for resources/read.' );
+		}
+
+		$uri = $params['uri'];
+
+		if ( 'wordpress://posts/recent' === $uri ) {
+			$recent_posts = wp_get_recent_posts(
+				array(
+					'numberposts' => 10,
+					'post_status' => 'publish',
+				)
+			);
+
+			$items = array();
+			if ( is_array( $recent_posts ) ) {
+				foreach ( $recent_posts as $post ) {
+					$post_id = (int) $post['ID'];
+					$cats    = wp_get_post_categories( $post_id, array( 'fields' => 'names' ) );
+					$tags    = wp_get_post_tags( $post_id, array( 'fields' => 'names' ) );
+
+					$items[] = array(
+						'id'         => $post_id,
+						'title'      => $post['post_title'],
+						'url'        => get_permalink( $post_id ),
+						'date'       => $post['post_date'],
+						'excerpt'    => ! empty( $post['post_excerpt'] ) ? $post['post_excerpt'] : wp_trim_words( wp_strip_all_tags( $post['post_content'] ), 30 ),
+						'categories' => $cats,
+						'tags'       => $tags,
+					);
+				}
+			}
+
+			$json_data = wp_json_encode( $items, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+
+			$result = array(
+				'contents' => array(
+					array(
+						'uri'      => 'wordpress://posts/recent',
+						'mimeType' => 'application/json',
+						'text'     => $json_data,
+					),
+				),
+			);
+
+			return self::format_result( $id, $result );
+		}
+
+		return self::format_error( $id, -32602, sprintf( 'Unknown resource URI: %s', esc_html( $uri ) ) );
 	}
 
 	/**

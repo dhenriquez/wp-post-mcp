@@ -2,9 +2,13 @@
 
 A native WordPress plugin in PHP that exposes a **Model Context Protocol (MCP)** server with full support for **Server-Sent Events (SSE)** and **HTTP JSON-RPC 2.0** at `https://your-site.com/mcp`. It allows AI models such as **Gemini Spark**, **Claude Desktop**, **Cursor**, **Antigravity**, etc., to securely interact with your WordPress site to:
 
-- 📋 **List existing categories** to assign the proper category ID.
-- 🏷️ **List existing tags** to suggest or attach relevant tags.
+- 📋 **List existing categories & tags** to assign proper taxonomy terms.
+- 🖼️ **Upload images via Base64** into the Media Library with complete SEO metadata (Alt Text, Title, Caption, Description) and attach them as `featured_image`.
 - 📝 **Create posts strictly in draft status (`draft`)** with full support for clean HTML and native Gutenberg block markup (`<!-- wp:paragraph -->`, `<!-- wp:heading -->`, etc.).
+- 📖 **Read existing posts (`read_post`)** with token-optimized sanitized text or HTML.
+- ✏️ **Iteratively update drafts (`update_draft`)** with revised text, metadata, or images.
+- 🧠 **Custom MCP Prompts** configurable right from the WordPress Admin panel.
+- 🌐 **MCP Resources** (such as `wordpress://posts/recent`) to give the AI passive awareness of recent content for internal linking.
 
 ---
 
@@ -16,7 +20,7 @@ A native WordPress plugin in PHP that exposes a **Model Context Protocol (MCP)**
    ```
 2. Navigate to your WordPress Admin dashboard (`WP Admin > Plugins`).
 3. Activate the **WP Post MCP** plugin.
-4. Go to **Settings > WP Post MCP** to view your ready-to-use connection URL and auto-generated API Key.
+4. Go to **Settings > WP Post MCP** to view your ready-to-use connection URL, auto-generated API Key, and manage your AI Prompts.
 
 ---
 
@@ -27,7 +31,7 @@ The plugin automatically generates a **Master API Key** that eliminates issues w
 1. In your WordPress dashboard, go to **Settings > WP Post MCP**.
 2. Click the **Copy URL** button (you will get a URL like `https://your-site.com/mcp?api_key=wpmcp_xxxxxxx`).
 3. In **Gemini Spark** (`gemini.google.com > Settings > Connected Apps > Add a custom app`) or in **Claude**, paste that exact URL into the **Server URL** field.
-4. Done! The AI will immediately have access to list categories, discover tags, and draft articles.
+4. Done! The AI will immediately have access to list categories, discover tags, upload media, draft and update articles.
 
 ---
 
@@ -63,10 +67,53 @@ Creates a new post in WordPress strictly in `draft` status.
   * `title` *(string, required)*: The title of the post.
   * `content` *(string, required)*: The post body in clean HTML or WordPress Gutenberg blocks markup.
   * `category_id` *(integer or array of integers, optional)*: Existing category ID(s) to assign.
-  * `tags` *(array of strings or comma-separated string, optional)*: Tags to attach (WordPress auto-creates any missing tags).
+  * `tags` *(array of strings or comma-separated string, optional)*: Tags to attach.
   * `excerpt` *(string, optional)*: Short summary or excerpt.
   * `slug` *(string, optional)*: Custom URL slug.
-* **Response**: Returns the post ID, admin edit URL (`/wp-admin/post.php?post=ID&action=edit`), and the post preview URL.
+  * `featured_image_id` *(integer, optional)*: Media attachment ID to set as featured image.
+* **Response**: Returns post ID, admin edit URL (`/wp-admin/post.php?post=ID&action=edit`), and preview URL.
+
+### 4. `upload_media`
+Uploads an image encoded in Base64 from the local PC into the WordPress Media Library.
+* **Parameters**:
+  * `file_base64` *(string, required)*: Base64 string of the image.
+  * `filename` *(string, optional)*: Desired filename (e.g. `foto-articulo.jpg`).
+  * `alt_text` *(string, optional)*: Alternative text for SEO / accessibility.
+  * `title` *(string, optional)*: Title of the image in media library.
+  * `caption` *(string, optional)*: Caption text.
+  * `description` *(string, optional)*: Detailed image description.
+* **Response**: Returns attachment ID (`attachment_id`), direct URL, and metadata summary.
+
+### 5. `read_post`
+Reads an existing post (draft or published) by ID.
+* **Parameters**:
+  * `post_id` *(integer, required)*: ID of the post.
+  * `format` *(string, optional, `clean_text` | `html` | `raw`)*: Defaults to `clean_text` to save AI context tokens.
+* **Response**: Returns title, status, author, categories, tags, featured image, and content.
+
+### 6. `update_draft`
+Updates an existing draft in WordPress.
+* **Parameters**:
+  * `post_id` *(integer, required)*: ID of the draft post.
+  * `title` *(string, optional)*: New title.
+  * `content` *(string, optional)*: New content body.
+  * `category_id` *(integer or array, optional)*: Categories.
+  * `tags` *(array of strings or string, optional)*: Tags.
+  * `excerpt` *(string, optional)*: Excerpt.
+  * `slug` *(string, optional)*: Slug.
+  * `featured_image_id` *(integer, optional)*: Attachment ID to set or replace featured image.
+
+---
+
+## 🧠 MCP Prompts & Resources
+
+### Prompts
+You can manage custom prompt templates under **Settings > WP Post MCP**. The plugin includes default prompts for:
+- `redactar_post_seo`: Instructs the AI on formatting Gutenberg blocks, headings, and drafting an SEO-optimized article.
+- `mejorar_borrador`: Instructs the AI to read a draft, enhance its prose, and update it.
+
+### Resources
+- `wordpress://posts/recent`: Returns JSON with the 10 most recent published posts (titles, URLs, and summaries) so the AI can automatically create internal links.
 
 ---
 
@@ -93,7 +140,7 @@ If your desktop client connects via `stdio` using `mcp-remote`:
 
 ## 🎨 Gutenberg Blocks Content Example
 
-The `content` parameter of `create_draft_post` accepts standard HTML as well as native WordPress block comments:
+The `content` parameter of `create_draft_post` and `update_draft` accepts standard HTML as well as native WordPress block comments:
 
 ```html
 <!-- wp:paragraph -->
@@ -120,7 +167,7 @@ The `content` parameter of `create_draft_post` accepts standard HTML as well as 
 
 ## 🔒 Security & Guarantees
 
-- **No Accidental Publishing**: Every post created by this plugin is explicitly saved with `post_status = 'draft'`. No post will ever be published without human review.
+- **No Accidental Publishing**: Every post created or updated by this plugin is strictly restricted to draft status (`post_status = 'draft'`).
 - **Capability Verification**: Every tool invocation verifies that the authenticated user possesses the `edit_posts` capability.
 - **CORS Enabled**: Supports cross-origin web clients such as `https://gemini.google.com`.
 - **Compatibility**: Works seamlessly with PHP 7.4, 8.0, 8.1, 8.2, 8.3, and WordPress 5.6+.
